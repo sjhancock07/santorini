@@ -39,7 +39,6 @@ h3{font-size:11px;font-weight:600;color:var(--gold);letter-spacing:.1em;text-tra
 .btn:disabled{opacity:.35;cursor:default;pointer-events:none;}
 .note{font-size:12px;color:var(--text2);text-align:center;font-family:sans-serif;}
 .err{font-size:12px;color:#B91C1C;text-align:center;font-family:sans-serif;}
-.ok{font-size:12px;color:#1A7A40;text-align:center;font-family:sans-serif;}
 .tgl{width:36px;height:20px;border-radius:10px;border:2px solid var(--btn-bdr);background:var(--btn-bg);cursor:pointer;position:relative;display:inline-block;flex-shrink:0;}
 .tgl.on{background:var(--on-bg);border-color:var(--on-bdr);}
 .tgl::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:white;}
@@ -74,6 +73,9 @@ h3{font-size:11px;font-weight:600;color:var(--gold);letter-spacing:.1em;text-tra
 .code-inp{font-size:20px;letter-spacing:0.14em;text-transform:uppercase;width:120px;text-align:center;padding:7px 10px;border:2px solid var(--btn-bdr);border-radius:6px;background:var(--card);color:var(--text1);font-family:'Cinzel',Georgia,serif;}
 .code-inp:focus{outline:none;border-color:var(--gold);}
 .ol-badge{font-size:11px;padding:3px 10px;border-radius:10px;background:#1A4A8A22;border:1px solid #1A4A8A55;color:var(--blue);font-family:sans-serif;}
+.lobby-row{display:flex;flex-direction:column;gap:4px;width:100%;background:var(--pg);border:1.5px solid var(--bdr);border-radius:8px;padding:10px 12px;}
+.lobby-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.08em;font-family:sans-serif;}
+.lobby-val{font-size:13px;color:var(--text1);font-family:sans-serif;}
 #sb{font-family:'Cinzel',Georgia,serif;font-size:13px;font-weight:500;color:var(--text1);background:var(--card);border:2px solid var(--gold);border-radius:8px;padding:9px 20px;min-width:380px;max-width:97vw;text-align:center;letter-spacing:.02em;}
 #board{display:grid;grid-template-columns:repeat(5,78px);gap:5px;padding:10px;background:var(--board-bg);border-radius:10px;border:3px solid var(--bdr);}
 .cell{width:78px;height:78px;border:1.5px solid rgba(160,120,60,.25);border-radius:6px;background:#FAF6EE;position:relative;overflow:hidden;cursor:default;}
@@ -117,7 +119,7 @@ h3{font-size:11px;font-weight:600;color:var(--gold);letter-spacing:.1em;text-tra
 <body>
 <div id="root"></div>
 <script>
-/* ===================== FIREBASE CONFIG ===================== */
+/* ===== FIREBASE ===== */
 var FB_CFG={
   apiKey:"AIzaSyDXTi_rkB8KcHnHT5g5N7_Bz_k2aIWxL-I",
   authDomain:"santorini-70613.firebaseapp.com",
@@ -130,10 +132,8 @@ var FB_CFG={
 var db=null;
 function initFB(){
   if(db)return true;
-  try{
-    if(!firebase.apps.length)firebase.initializeApp(FB_CFG);
-    db=firebase.database();return true;
-  }catch(e){console.error('Firebase init error',e);return false;}
+  try{if(!firebase.apps.length)firebase.initializeApp(FB_CFG);db=firebase.database();return true;}
+  catch(e){console.error(e);return false;}
 }
 function genCode(){
   var c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -141,7 +141,7 @@ function genCode(){
   return s;
 }
 
-/* ===================== GAME VARS ===================== */
+/* ===== GAME VARS ===== */
 var SZ=5;
 var CLR=[{fill:'#185FA5'},{fill:'#8B3A2A'},{fill:'#276749'},{fill:'#6B3070'}];
 var NAMES=['Player 1','Player 2','Player 3','Player 4'];
@@ -169,36 +169,20 @@ var draftOrder,draftStep;
 var selWI,hlMv,hlBd,atlasDome,artStart,demFirst,hermesFlat;
 var STACK_H=[0,13,35,48];
 
-/* ===================== ONLINE STATE ===================== */
-var onlineMode=false,isHost=false,gameCode='',stateRef=null,guestRef=null;
-var pushSeq=0,lastAppliedSeq=-1,gameUIBuilt=false;
+/* ===== ONLINE STATE ===== */
+/* Phase flow:
+   LOBBY  = code shared, guest connected, host configuring
+   GAME   = game running
+*/
+var onlineMode=false,isHost=false,gameCode='';
+var lobbyRef=null,stateRef=null;
+var mySeq=0; // sequence number of last state I pushed
+var gameUIBuilt=false;
 
-/* ===================== UTILS ===================== */
 function G(id){return document.getElementById(id);}
 function root(){return G('root');}
 
-/* ===================== SERIALIZATION ===================== */
-function serG(){
-  var g=[];
-  for(var r=0;r<SZ;r++){
-    g[r]=[];
-    for(var c=0;c<SZ;c++){
-      var cell=grid[r][c];
-      g[r][c]={lv:cell.level,dm:cell.dome?1:0,wp:cell.worker?players.indexOf(cell.worker.p):-1,ww:cell.worker?cell.worker.wi:-1};
-    }
-  }
-  return g;
-}
-function desG(g){
-  grid=[];
-  for(var r=0;r<SZ;r++){
-    grid[r]=[];
-    for(var c=0;c<SZ;c++){
-      var cell=g[r][c];
-      grid[r][c]={level:cell.lv,dome:!!cell.dm,worker:cell.wp>=0?{p:players[cell.wp],wi:cell.ww}:null};
-    }
-  }
-}
+/* ===== SERIALIZATION ===== */
 function serP(){
   return players.map(function(p){
     return {name:p.name,fill:p.color.fill,team:p.team,ability:p.ability,isHuman:p.isHuman?1:0,
@@ -209,12 +193,25 @@ function desP(sp){
   players=sp.map(function(p){
     var clr=CLR.find(function(c){return c.fill===p.fill;})||CLR[0];
     return {name:p.name,color:clr,team:p.team,ability:p.ability,isHuman:!!p.isHuman,
-      workers:p.workers.map(function(w){return {pos:w?[w[0],w[1]]:null};})};
+      workers:p.workers.map(function(w){return{pos:w?[w[0],w[1]]:null};})};
   });
 }
-function serState(){
-  return {
-    seq:++pushSeq,
+function serG(){
+  var g=[];
+  for(var r=0;r<SZ;r++){g[r]=[];for(var c=0;c<SZ;c++){var cell=grid[r][c];g[r][c]={lv:cell.level,dm:cell.dome?1:0,wp:cell.worker?players.indexOf(cell.worker.p):-1,ww:cell.worker?cell.worker.wi:-1};}}
+  return g;
+}
+function desG(g){
+  grid=[];
+  for(var r=0;r<SZ;r++){grid[r]=[];for(var c=0;c<SZ;c++){var cell=g[r][c];grid[r][c]={level:cell.lv,dome:!!cell.dm,worker:cell.wp>=0?{p:players[cell.wp],wi:cell.ww}:null};}}
+}
+
+/* Push full game state to Firebase. Only the active player calls this. */
+function pushState(){
+  if(!onlineMode||!db)return;
+  mySeq++;
+  var s={
+    seq:mySeq,ts:Date.now(),
     useAbs:useAbs?1:0,useTeams:useTeams?1:0,
     players:serP(),grid:serG(),
     turnIdx:turnIdx,phase:phase,gameOver:gameOver?1:0,
@@ -222,25 +219,32 @@ function serState(){
     selWI:selWI===null?-1:selWI,
     hlMv:hlMv,hlBd:hlBd,
     atlasDome:atlasDome?1:0,
-    artStart:artStart,demFirst:demFirst,hermesFlat:hermesFlat?1:0
+    artStart:artStart||null,demFirst:demFirst||null,hermesFlat:hermesFlat?1:0
   };
+  stateRef.set(s);
 }
-function applyState(s){
-  if(!s||s.seq<=lastAppliedSeq)return;
-  lastAppliedSeq=s.seq;
+
+/* Apply incoming Firebase state. Called by BOTH host and guest when they receive a state
+   that was pushed by the OTHER player (or initial state from host). */
+function onRemoteState(s){
+  if(!s)return;
+  // Skip if this is our own push echoed back
+  if(s.seq===mySeq)return;
+
   useAbs=!!s.useAbs;useTeams=!!s.useTeams;
-  desP(s.players);
-  desG(s.grid);
+  desP(s.players);desG(s.grid);
   turnIdx=s.turnIdx;phase=s.phase;gameOver=!!s.gameOver;
   draftStep=s.draftStep;draftOrder=s.draftOrder;
   selWI=s.selWI===-1?null:s.selWI;
   hlMv=s.hlMv||[];hlBd=s.hlBd||[];
   atlasDome=!!s.atlasDome;
   artStart=s.artStart||null;demFirst=s.demFirst||null;hermesFlat=!!s.hermesFlat;
+
   if(!gameUIBuilt){buildUI();gameUIBuilt=true;}
   renderAll();
-  // If it's a CPU turn and I'm the host, run the CPU
-  if(onlineMode&&isHost&&!gameOver){
+
+  // If it's a CPU turn, only the host runs it
+  if(isHost&&!gameOver){
     var cp=players[turnIdx];
     if(!cp.isHuman){
       if(phase==='place')setTimeout(cpuPlace,600);
@@ -248,55 +252,44 @@ function applyState(s){
     }
   }
 }
-function pushState(){
-  if(!onlineMode||!db)return;
-  lastAppliedSeq=pushSeq+1; // pre-mark so we skip our own echo
-  var s=serState();
-  stateRef.set(s);
-}
 
-/* ===================== ONLINE PLAYER ASSIGNMENT ===================== */
-/* Host plays even-indexed humans (0,2); Guest plays odd-indexed humans (1,3) */
+/* ===== TURN ASSIGNMENT ===== */
+/* Host controls human players at even indices (0,2); guest controls odd (1,3) */
 function isMyTurn(){
-  if(!players[turnIdx])return false;
+  if(!players||!players[turnIdx])return false;
   var cp=players[turnIdx];
   if(!cp.isHuman)return false;
   if(!onlineMode)return true;
-  var humanPlayers=players.filter(function(p){return p.isHuman;});
-  var hi=humanPlayers.indexOf(cp);
-  return isHost?(hi%2===0):(hi%2===1);
-}
-function myLabel(){
-  if(!onlineMode)return '';
-  var humanPlayers=players.filter(function(p){return p.isHuman;});
-  var mine=humanPlayers.filter(function(_,i){return isHost?(i%2===0):(i%2===1);});
-  return mine.map(function(p){return p.name;}).join(' & ');
+  var humanIdx=players.filter(function(p){return p.isHuman;}).indexOf(cp);
+  return isHost?(humanIdx%2===0):(humanIdx%2===1);
 }
 
-/* ===================== RULES ===================== */
+/* ===== RULES PAGE ===== */
 function showRules(){
   root().innerHTML='<div class="sc" style="width:460px;max-width:98vw;"><h2>How to Play</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
     +'<div class="rules-box">'
-    +'<div class="rules-section"><h3>Goal</h3><p>Win by <strong>moving up onto a level-3 tower</strong> on your turn. You must come from a lower level \u2014 already standing on level 3 does not count.</p></div>'
+    +'<div class="rules-section"><h3>Goal</h3><p>Win by <strong>moving up onto a level-3 tower</strong>. You must come from a lower level \u2014 already standing on level 3 does not count.</p></div>'
     +'<div class="rules-section"><h3>Setup</h3><ul><li>Players place workers one at a time in snake-draft order.</li><li>2-player: 2 workers each. 3 or 4-player: 1 worker each.</li></ul></div>'
-    +'<div class="rules-section"><h3>On Your Turn</h3><ul><li><strong>Move:</strong> Move to any adjacent space. Climb at most 1 level, stay flat, or drop freely. No domed or occupied spaces.</li><li><strong>Build:</strong> Add a block to any adjacent empty undomed space. 3 blocks then a dome.</li></ul></div>'
-    +'<div class="rules-section"><h3>Domes</h3><p>Building on a level-3 tower adds a dome \u2014 no one can enter or build there.</p></div>'
-    +'<div class="rules-section"><h3>Winning</h3><p>Move <em>up</em> onto level 3 to win. No legal moves = elimination.</p></div>'
-    +'<div class="rules-section"><h3>Teams (4-Player)</h3><p>Two teams of 2. Turns alternate between teams. Either teammate winning wins for the team.</p></div>'
-    +'<div class="rules-section"><h3>God Powers</h3><p>Optional powers that bend the rules. Hover a player name in-game to see their power.</p></div>'
+    +'<div class="rules-section"><h3>On Your Turn</h3><ul>'
+    +'<li><strong>Move:</strong> Move to any adjacent space. Climb at most 1 level, stay flat, or drop freely. No domed or occupied spaces.</li>'
+    +'<li><strong>Build:</strong> Add a block to any adjacent empty undomed space. 3 blocks then a dome.</li></ul></div>'
+    +'<div class="rules-section"><h3>Domes</h3><p>Building on level 3 adds a dome \u2014 no one can enter or build there.</p></div>'
+    +'<div class="rules-section"><h3>Winning</h3><p>Move <em>up</em> onto level 3. No legal moves = elimination.</p></div>'
+    +'<div class="rules-section"><h3>Teams (4-Player)</h3><p>Two teams of 2. Turns alternate. Either teammate winning counts for the team.</p></div>'
+    +'<div class="rules-section"><h3>God Powers</h3><p>Optional powers that change your turn. Hover a player name in-game to see their power.</p></div>'
     +'</div><div class="divider">&#9670; &#9670; &#9670;</div>'
     +'<button class="btn pri" onclick="showSetup()">\u2190 Back</button></div>';
 }
 
-/* ===================== SETUP SCREENS ===================== */
+/* ===== MAIN SETUP ===== */
 function showSetup(){
-  onlineMode=false;isHost=false;gameCode='';gameUIBuilt=false;
+  onlineMode=false;isHost=false;gameCode='';gameUIBuilt=false;mySeq=0;
   if(stateRef){stateRef.off();stateRef=null;}
-  if(guestRef){guestRef.off();guestRef=null;}
+  if(lobbyRef){lobbyRef.off();lobbyRef=null;}
   var total=hC+cC,ok=total>=2&&total<=4;
-  var note=!ok?(total<2?'Need at least 2 players total.':'Maximum 4 players total.')
+  var note=!ok?(total<2?'Need at least 2 total.':'Max 4 players.')
     :total===2?'2 players \u2014 2 workers each, snake draft.'
-    :total===3?'3 players \u2014 1 worker each, free-for-all.'
+    :total===3?'3 players \u2014 1 worker each.'
     :'4 players \u2014 1 worker each, assign teams next.';
   var nxt=(total===4||useAbs)&&ok?'Next \u2192':'Start Game';
   root().innerHTML='<div class="sc"><h2>Santorini</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
@@ -311,9 +304,9 @@ function showSetup(){
     +'<div class="grp"><button class="btn" onclick="showRules()">How to Play</button>'
     +'<button class="btn pri" onclick="goNext()" '+(ok?'':'disabled')+'>'+nxt+'</button></div>'
     +'<hr class="sep">'
-    +'<div class="row"><span class="rl" style="color:var(--blue);font-weight:600">Play Online</span></div>'
+    +'<div class="note" style="color:var(--blue);font-weight:500;font-family:\'Cinzel\'">Play Online</div>'
     +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;">'
-    +'<button class="btn grn" onclick="showHostSetup()">Host a Game</button>'
+    +'<button class="btn grn" onclick="startHostLobby()">Host a Game</button>'
     +'<span class="note">or</span>'
     +'<input class="code-inp" id="join-inp" placeholder="CODE" maxlength="4" oninput="this.value=this.value.toUpperCase()">'
     +'<button class="btn grn" onclick="joinGame()">Join</button>'
@@ -326,170 +319,121 @@ function sC(n){cC=n;showSetup();}
 function sD(d){diff=d;showSetup();}
 function togAbs(){useAbs=!useAbs;showSetup();}
 
-function goNext(){
-  var total=hC+cC;if(total<2||total>4)return;
-  mkPlayers();
-  if(total===4)showTeams();else if(useAbs)showAbil();else launch();
-}
-
-/* Host flow: same setup screens, ends at host waiting room */
-function showHostSetup(){
-  var total=hC+cC,ok=total>=2&&total<=4;
-  var need2=(hC<2&&cC===0);
-  var note=need2?'Online play needs at least 2 human players (or 1 human + CPUs).'
-    :!ok?(total<2?'Need at least 2 players total.':'Max 4 players total.')
-    :total===2?'2 players \u2014 2 workers each.'
-    :total===3?'3 players \u2014 1 worker each, free-for-all.'
-    :'4 players \u2014 1 worker each, assign teams next.';
-  var nxt=(total===4||useAbs)&&ok?'Next \u2192':'Host Game';
-  root().innerHTML='<div class="sc"><h2>Host Online Game</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
-    +'<div class="note">Configure the game. Your opponent will join with a code.</div>'
-    +'<div class="row"><span class="rl">Human Players</span><div class="grp">'
-    +[1,2,3,4].map(function(n){return '<button class="btn'+(hC===n?' on':'')+'" onclick="sHO('+n+')">'+n+'</button>';}).join('')+'</div></div>'
-    +'<div class="row"><span class="rl">CPU Players</span><div class="grp">'
-    +[0,1,2,3].map(function(n){return '<button class="btn'+(cC===n?' on':'')+'" onclick="sCO('+n+')">'+n+'</button>';}).join('')+'</div></div>'
-    +(cC>0?'<div class="row"><span class="rl">CPU Difficulty</span><div class="grp">'
-    +['Easy','Medium','Hard'].map(function(d){return '<button class="btn'+(diff===d.toLowerCase()?' on':'')+'" onclick="sD(\''+d.toLowerCase()+'\')">'+d+'</button>';}).join('')+'</div></div>':'')
-    +'<div class="row"><div class="tgl-row"><div class="tgl'+(useAbs?' on':'')+'" onclick="togAbsO()"></div><span class="rl">God Powers</span></div></div>'
-    +'<div class="'+(ok&&!need2?'note':'err')+'">'+note+'</div>'
-    +'<div class="grp"><button class="btn" onclick="showSetup()">\u2190 Back</button>'
-    +'<button class="btn pri" onclick="goNextOnline()" '+(ok&&!need2?'':'disabled')+'>'+nxt+'</button></div></div>';
-}
-function sHO(n){hC=n;showHostSetup();}
-function sCO(n){cC=n;showHostSetup();}
-function togAbsO(){useAbs=!useAbs;showHostSetup();}
-function goNextOnline(){
-  var total=hC+cC;if(total<2||total>4)return;
-  mkPlayers();
-  onlineMode=true;isHost=true;
-  if(total===4)showTeamsOnline();else if(useAbs)showAbilOnline();else showHostWait();
-}
-
-function showTeamsOnline(){
-  useTeams=true;
-  var t0=players.filter(function(p){return p.team===0;}).length,valid=t0===2;
-  var rows=players.map(function(p,i){
-    return '<div class="trow"><div class="tn"><div class="dot" style="background:'+p.color.fill+'"></div>'+p.name+'</div>'
-      +'<div class="grp"><button class="tb'+(p.team===0?' on':'')+'" onclick="setTmO('+i+',0)">Team I</button>'
-      +'<button class="tb'+(p.team===1?' on':'')+'" onclick="setTmO('+i+',1)">Team II</button></div></div>';
-  }).join('');
-  root().innerHTML='<div class="sc"><h2>Assign Teams</h2>'
-    +'<div class="note" style="font-family:sans-serif">Assign exactly 2 players to each team.</div>'
-    +'<div style="width:100%;display:flex;flex-direction:column;gap:8px;">'+rows+'</div>'
-    +(valid?'':'<div class="err">Teams must be 2 vs 2.</div>')
-    +'<div class="grp"><button class="btn" onclick="showHostSetup()">\u2190 Back</button>'
-    +'<button class="btn pri" onclick="tmsNextO()" '+(valid?'':'disabled')+'>'+(useAbs?'Next \u2192':'Host Game')+'</button></div></div>';
-}
-function setTmO(i,t){players[i].team=t;showTeamsOnline();}
-function tmsNextO(){
-  if(players.filter(function(p){return p.team===0;}).length!==2)return;
-  var t0=players.filter(function(p){return p.team===0;}),t1=players.filter(function(p){return p.team===1;});
-  players=[t0[0],t1[0],t0[1],t1[1]];
-  if(useAbs)showAbilOnline();else showHostWait();
-}
-
-function showAbilOnline(){
-  renderAbil(0,true);
-}
-
-function showHostWait(){
-  if(!initFB()){
-    root().innerHTML='<div class="sc"><h2>Connection Error</h2><p class="err" style="font-family:sans-serif">Could not connect to Firebase. Check your internet connection.</p><button class="btn pri" onclick="showSetup()">\u2190 Back</button></div>';
-    return;
-  }
-  gameCode=genCode();
-  var codeRef=db.ref('games/'+gameCode);
-  // Write placeholder so code is "claimed"
-  codeRef.child('meta').set({created:Date.now(),status:'waiting'});
+/* ===== ONLINE: HOST LOBBY (code first, config after guest joins) ===== */
+function startHostLobby(){
+  if(!initFB()){alert('Could not connect to Firebase. Check internet connection.');return;}
+  onlineMode=true;isHost=true;gameCode=genCode();gameUIBuilt=false;mySeq=0;
+  // Write lobby record so guest can find the room
+  lobbyRef=db.ref('games/'+gameCode+'/lobby');
+  lobbyRef.set({status:'waiting',created:Date.now()});
+  stateRef=db.ref('games/'+gameCode+'/state');
   // Listen for guest joining
-  guestRef=db.ref('games/'+gameCode+'/guest');
-  guestRef.on('value',function(snap){
-    var guestEl=G('guest-status');
-    if(snap.val()&&guestEl){
-      guestEl.innerHTML='<span style="color:#1A7A40;font-family:sans-serif">&#10003; Guest connected! You can start.</span>';
-      var startBtn=G('host-start');
-      if(startBtn)startBtn.removeAttribute('disabled');
+  db.ref('games/'+gameCode+'/guest').on('value',function(snap){
+    var el=G('guest-status');
+    if(snap.val()&&el){
+      el.innerHTML='<span style="color:#1A7A40;font-family:sans-serif;font-size:12px">&#10003; Guest connected! Configure and start when ready.</span>';
     }
   });
-  stateRef=db.ref('games/'+gameCode+'/state');
-  root().innerHTML='<div class="sc"><h2>Game Ready</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
-    +'<div class="note" style="font-family:sans-serif">Share this code with your opponent:</div>'
-    +'<div class="code-big">'+gameCode+'</div>'
-    +'<div id="guest-status" class="note" style="font-family:sans-serif;min-height:18px;">Waiting for guest to join...</div>'
-    +'<div class="note" style="font-family:sans-serif">You will play as: <strong>'+
-      players.filter(function(p,i){var hi=players.filter(function(q){return q.isHuman;}).indexOf(p);return p.isHuman&&hi%2===0;}).map(function(p){return p.name;}).join(' & ')
-    +'</strong></div>'
-    +'<div class="grp">'
-    +'<button class="btn" onclick="showSetup()">\u2190 Cancel</button>'
-    +'<button class="btn pri" id="host-start" onclick="launchOnline()">Start Game</button>'
-    +'</div></div>';
+  showHostConfig();
 }
 
-function launchOnline(){
-  launch(true);
+function showHostConfig(){
+  var total=hC+cC,ok=total>=2&&total<=4;
+  var note=!ok?(total<2?'Need at least 2 players.':'Max 4 players.')
+    :total===2?'2 players \u2014 2 workers each.'
+    :total===3?'3 players \u2014 1 worker each.'
+    :'4 players \u2014 assign teams next.';
+  var nxt=(total===4||useAbs)&&ok?'Next \u2192':'Start Game';
+  root().innerHTML='<div class="sc"><h2>Host: '+gameCode+'</h2>'
+    +'<div class="divider">&#9670; &#9670; &#9670;</div>'
+    +'<div class="note" style="font-family:sans-serif">Share code <strong style="color:var(--gold);font-size:15px;letter-spacing:.1em">'+gameCode+'</strong> with your opponent.</div>'
+    +'<div id="guest-status" class="note" style="font-family:sans-serif;min-height:16px;color:var(--text2)">Waiting for guest to join...</div>'
+    +'<div class="row"><span class="rl">Human Players</span><div class="grp">'
+    +[1,2,3,4].map(function(n){return '<button class="btn'+(hC===n?' on':'')+'" onclick="sHC('+n+')">'+n+'</button>';}).join('')+'</div></div>'
+    +'<div class="row"><span class="rl">CPU Players</span><div class="grp">'
+    +[0,1,2,3].map(function(n){return '<button class="btn'+(cC===n?' on':'')+'" onclick="sCC('+n+')">'+n+'</button>';}).join('')+'</div></div>'
+    +(cC>0?'<div class="row"><span class="rl">CPU Difficulty</span><div class="grp">'
+    +['Easy','Medium','Hard'].map(function(d){return '<button class="btn'+(diff===d.toLowerCase()?' on':'')+'" onclick="sD(\''+d.toLowerCase()+'\')">'+d+'</button>';}).join('')+'</div></div>':'')
+    +'<div class="row"><div class="tgl-row"><div class="tgl'+(useAbs?' on':'')+'" onclick="togAbsC()"></div><span class="rl">God Powers</span></div></div>'
+    +'<div class="'+(ok?'note':'err')+'">'+note+'</div>'
+    +'<div class="grp"><button class="btn" onclick="showSetup()">\u2190 Cancel</button>'
+    +'<button class="btn pri" onclick="hostGoNext()" '+(ok?'':'disabled')+'>'+nxt+'</button></div></div>';
+}
+function sHC(n){hC=n;showHostConfig();}
+function sCC(n){cC=n;showHostConfig();}
+function togAbsC(){useAbs=!useAbs;showHostConfig();}
+function hostGoNext(){
+  var total=hC+cC;if(total<2||total>4)return;
+  mkPlayers();
+  if(total===4)showTeams(true);
+  else if(useAbs)showAbil(true);
+  else launch();
 }
 
-/* Guest join flow */
+/* ===== ONLINE: GUEST JOIN ===== */
 function joinGame(){
-  var inp=G('join-inp');
-  var errEl=G('join-err');
+  var inp=G('join-inp');var errEl=G('join-err');
   var code=(inp?inp.value:'').trim().toUpperCase();
-  if(code.length!==4){if(errEl)errEl.textContent='Enter a 4-letter game code.';return;}
-  if(!initFB()){if(errEl)errEl.textContent='Connection failed. Check your internet.';return;}
+  if(code.length!==4){if(errEl)errEl.textContent='Enter a 4-letter code.';return;}
+  if(!initFB()){if(errEl)errEl.textContent='Connection failed.';return;}
   if(errEl)errEl.textContent='';
-  // Signal guest presence
-  db.ref('games/'+code+'/guest').set({joined:Date.now()});
-  onlineMode=true;isHost=false;gameCode=code;
-  stateRef=db.ref('games/'+code+'/state');
-  root().innerHTML='<div class="sc"><h2>Joining '+code+'</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
-    +'<div class="note" style="font-family:sans-serif">Waiting for host to start the game...</div>'
-    +'<div class="note" style="font-family:sans-serif;margin-top:8px;">Code: <strong style="color:var(--gold);font-size:16px;letter-spacing:0.1em">'+code+'</strong></div>'
-    +'<button class="btn" onclick="showSetup()" style="margin-top:8px">\u2190 Cancel</button></div>';
-  // Listen for game state
-  stateRef.on('value',function(snap){
-    var s=snap.val();
-    if(!s)return;
-    applyState(s);
+  // Verify lobby exists
+  db.ref('games/'+code+'/lobby').once('value',function(snap){
+    if(!snap.val()){if(errEl)errEl.textContent='Game not found. Check the code.';return;}
+    onlineMode=true;isHost=false;gameCode=code;gameUIBuilt=false;mySeq=0;
+    // Signal presence
+    db.ref('games/'+code+'/guest').set({joined:Date.now()});
+    stateRef=db.ref('games/'+code+'/state');
+    // Listen for game state pushed by host
+    stateRef.on('value',function(snap){onRemoteState(snap.val());});
+    // Show waiting screen
+    root().innerHTML='<div class="sc"><h2>Game '+code+'</h2><div class="divider">&#9670; &#9670; &#9670;</div>'
+      +'<div class="note" style="font-family:sans-serif">Connected! Waiting for host to configure and start...</div>'
+      +'<div class="note" style="font-family:sans-serif;margin-top:6px">Code: <strong style="color:var(--gold);font-size:15px;letter-spacing:.1em">'+code+'</strong></div>'
+      +'<div class="note" style="font-family:sans-serif;color:var(--text2);margin-top:4px">You will play as Player 2'+(hC>2?' & Player 4':'')+'</div>'
+      +'<button class="btn" onclick="showSetup()" style="margin-top:8px">\u2190 Cancel</button></div>';
   });
 }
 
+/* ===== LOCAL: SHARED SETUP SCREENS ===== */
 function mkPlayers(){
   players=[];var wPer=(hC+cC)===2?2:1,idx=0;
   for(var i=0;i<hC;i++,idx++)players.push({isHuman:true,color:CLR[idx],team:idx<2?0:1,name:NAMES[idx],workers:Array.from({length:wPer},function(){return{pos:null};}),ability:'none'});
   for(var j=0;j<cC;j++,idx++)players.push({isHuman:false,color:CLR[idx],team:idx<2?0:1,name:'CPU '+(j+1),workers:Array.from({length:wPer},function(){return{pos:null};}),ability:'__random__'});
 }
+function goNext(){var total=hC+cC;if(total<2||total>4)return;mkPlayers();if(total===4)showTeams(false);else if(useAbs)showAbil(false);else launch();}
 
-function showTeams(){
+function showTeams(online){
   useTeams=true;
   var t0=players.filter(function(p){return p.team===0;}).length,valid=t0===2;
   var rows=players.map(function(p,i){
     return '<div class="trow"><div class="tn"><div class="dot" style="background:'+p.color.fill+'"></div>'+p.name+'</div>'
-      +'<div class="grp"><button class="tb'+(p.team===0?' on':'')+'" onclick="setTm('+i+',0)">Team I</button>'
-      +'<button class="tb'+(p.team===1?' on':'')+'" onclick="setTm('+i+',1)">Team II</button></div></div>';
+      +'<div class="grp"><button class="tb'+(p.team===0?' on':'')+'" onclick="setTm('+i+',0,\''+online+'\')">Team I</button>'
+      +'<button class="tb'+(p.team===1?' on':'')+'" onclick="setTm('+i+',1,\''+online+'\')">Team II</button></div></div>';
   }).join('');
+  var backFn=online?'showHostConfig':'showSetup';
   root().innerHTML='<div class="sc"><h2>Assign Teams</h2>'
+    +(online?'<div class="note" style="font-family:sans-serif;color:var(--blue)">Code: <strong style="letter-spacing:.1em">'+gameCode+'</strong></div>':'')
     +'<div class="note" style="font-family:sans-serif">Assign exactly 2 players to each team.</div>'
     +'<div style="width:100%;display:flex;flex-direction:column;gap:8px;">'+rows+'</div>'
     +(valid?'':'<div class="err">Teams must be 2 vs 2.</div>')
-    +'<div class="grp"><button class="btn" onclick="showSetup()">\u2190 Back</button>'
-    +'<button class="btn pri" onclick="tmsNext()" '+(valid?'':'disabled')+'>'+(useAbs?'Next \u2192':'Start Game')+'</button></div></div>';
+    +'<div class="grp"><button class="btn" onclick="'+backFn+'()">\u2190 Back</button>'
+    +'<button class="btn pri" onclick="tmsNext(\''+online+'\')" '+(valid?'':'disabled')+'>'+(useAbs?'Next \u2192':'Start Game')+'</button></div></div>';
 }
-function setTm(i,t){players[i].team=t;showTeams();}
-function tmsNext(){
+function setTm(i,t,online){players[i].team=t;showTeams(online==='true'||online===true);}
+function tmsNext(online){
+  var isOnl=(online==='true'||online===true);
   if(players.filter(function(p){return p.team===0;}).length!==2)return;
   var t0=players.filter(function(p){return p.team===0;}),t1=players.filter(function(p){return p.team===1;});
   players=[t0[0],t1[0],t0[1],t1[1]];
-  if(useAbs)showAbil();else launch();
+  if(useAbs)showAbil(isOnl);else launch();
 }
 
-function showAbil(){renderAbil(0,false);}
-function showAbilOnline2(){renderAbil(0,true);}
-
+function showAbil(online){renderAbil(0,online);}
 function pickAb(pi,id,online){
-  if(id!=='none'&&id!=='__random__') players.forEach(function(p,i){if(i!==pi&&p.ability===id)p.ability='none';});
+  if(id!=='none'&&id!=='__random__')players.forEach(function(p,i){if(i!==pi&&p.ability===id)p.ability='none';});
   players[pi].ability=id;
-  var scroll=G('god-scroll');var sx=scroll?scroll.scrollLeft:0;
-  renderAbil(sx,online);
+  var scroll=G('god-scroll');var sx=scroll?scroll.scrollLeft:0;renderAbil(sx,online);
 }
 function clearAbil(pi,online){pickAb(pi,'none',online);}
 function dragAbil(id){draggedAbilId=id;}
@@ -499,21 +443,21 @@ function dropAbil(pi,online){
   var e=G('pr-'+pi);if(e)e.classList.remove('dov');
   if(draggedAbilId){
     var scroll=G('god-scroll');var sx=scroll?scroll.scrollLeft:0;
-    if(draggedAbilId!=='none'&&draggedAbilId!=='__random__') players.forEach(function(p,i){if(i!==pi&&p.ability===draggedAbilId)p.ability='none';});
+    if(draggedAbilId!=='none'&&draggedAbilId!=='__random__')players.forEach(function(p,i){if(i!==pi&&p.ability===draggedAbilId)p.ability='none';});
     players[pi].ability=draggedAbilId;draggedAbilId=null;renderAbil(sx,online);
   }
 }
 function renderAbil(scrollX,online){
+  var isOnl=(online===true||online==='true');
   var playerRows=players.map(function(p,pi){
     var sel=ABS.find(function(a){return a.id===p.ability;})||ABS[0];
     var badge='';
-    if(p.ability==='__random__') badge='<span class="ab-badge" style="background:var(--btn-bg)">Random</span>';
-    else if(sel.id!=='none') badge='<span class="ab-badge" style="background:'+p.color.fill+'">'+sel.name+'<span class="ab-x" onclick="clearAbil('+pi+','+(online?'true':'false')+')">&times;</span></span>';
-    var ol=online?'true':'false';
-    return '<div class="pr-row" id="pr-'+pi+'" ondragover="event.preventDefault();doverAbil('+pi+')" ondragleave="dleaveAbil('+pi+')" ondrop="event.preventDefault();dropAbil('+pi+','+ol+')">'
+    if(p.ability==='__random__')badge='<span class="ab-badge" style="background:var(--btn-bg)">Random</span>';
+    else if(sel.id!=='none')badge='<span class="ab-badge" style="background:'+p.color.fill+'">'+sel.name+'<span class="ab-x" onclick="clearAbil('+pi+','+isOnl+')">&times;</span></span>';
+    return '<div class="pr-row" id="pr-'+pi+'" ondragover="event.preventDefault();doverAbil('+pi+')" ondragleave="dleaveAbil('+pi+')" ondrop="event.preventDefault();dropAbil('+pi+','+isOnl+')">'
       +'<div class="pr-left"><div class="dot" style="background:'+p.color.fill+'"></div><span class="pr-name">'+p.name+'</span>'+badge+'</div>'
-      +'<div class="pr-btns"><button class="pill'+(p.ability==='__random__'?' on':'')+'" onclick="pickAb('+pi+',\'__random__\','+ol+')">Rand</button>'
-      +'<button class="pill'+(p.ability==='none'?' on':'')+'" onclick="pickAb('+pi+',\'none\','+ol+')">None</button></div></div>';
+      +'<div class="pr-btns"><button class="pill'+(p.ability==='__random__'?' on':'')+'" onclick="pickAb('+pi+',\'__random__\','+isOnl+')">Rand</button>'
+      +'<button class="pill'+(p.ability==='none'?' on':'')+'" onclick="pickAb('+pi+',\'none\','+isOnl+')">None</button></div></div>';
   }).join('');
   var godCards=ABS_REAL.map(function(a){
     var owner=players.find(function(p){return p.ability===a.id;});
@@ -521,61 +465,46 @@ function renderAbil(scrollX,online){
       +'<div class="god-nm">'+a.name+'</div>'+(owner?'<div class="god-own" style="background:'+owner.color.fill+'">'+owner.name+'</div>':'')
       +'<div class="god-ds">'+a.desc+'</div></div>';
   }).join('');
-  var backFn=online?'showHostSetup':'showSetup';
-  var nextFn=online?'showHostWait':'launch()';
-  var nextLbl=online?'Host Game':'Start Game';
+  var backFn=isOnl?'showHostConfig':'showSetup';
   root().innerHTML='<div class="sc" style="width:470px;max-width:98vw;"><h2>God Powers</h2>'
+    +(isOnl?'<div class="note" style="font-family:sans-serif;color:var(--blue)">Code: <strong style="letter-spacing:.1em">'+gameCode+'</strong></div>':'')
     +'<div class="note" style="font-family:sans-serif">Drag a power card onto a player, or use Rand / None.</div>'
     +'<div style="width:100%;display:flex;flex-direction:column;gap:6px;">'+playerRows+'</div>'
     +'<div class="drag-hint">\u2193 drag god cards to a player \u2193</div>'
     +'<div class="god-scroll" id="god-scroll">'+godCards+'</div>'
     +'<div class="grp"><button class="btn" onclick="'+backFn+'()">\u2190 Back</button>'
-    +'<button class="btn pri" onclick="'+nextFn+'">'+nextLbl+'</button></div></div>';
+    +'<button class="btn pri" onclick="launch()">Start Game</button></div></div>';
   var sc=G('god-scroll');if(sc&&scrollX)sc.scrollLeft=scrollX;
 }
-function abilBack(){showSetup();}
 
-function launch(fromOnlineHost){
+/* ===== LAUNCH ===== */
+function launch(){
   players.forEach(function(p){
     if(!useAbs){p.ability='none';}
-    else{
-      if(p.ability==='__random__')p.ability=ABS_REAL[Math.floor(Math.random()*ABS_REAL.length)].id;
-      if(!p.ability)p.ability='none';
-    }
+    else{if(p.ability==='__random__')p.ability=ABS_REAL[Math.floor(Math.random()*ABS_REAL.length)].id;if(!p.ability)p.ability='none';}
   });
   grid=[];
   for(var r=0;r<SZ;r++){grid[r]=[];for(var c=0;c<SZ;c++)grid[r][c]={level:0,dome:false,worker:null};}
   draftOrder=players.length===2?[0,1,1,0]:players.map(function(_,i){return i;});
-  draftStep=0;turnIdx=draftOrder[0];phase='place';gameOver=false;pushSeq=0;lastAppliedSeq=-1;
+  draftStep=0;turnIdx=draftOrder[0];phase='place';gameOver=false;
   selWI=null;hlMv=[];hlBd=[];atlasDome=false;artStart=null;demFirst=null;hermesFlat=false;
+  gameUIBuilt=true;
+  buildUI();renderAll();
 
-  if(fromOnlineHost){
-    // Online host: push initial state and listen for changes from guest
-    gameUIBuilt=true;
-    buildUI();renderAll();
-    pushState(); // writes initial state to Firebase
-    stateRef.on('value',function(snap){
-      var s=snap.val();
-      if(!s||s.seq<=lastAppliedSeq)return;
-      lastAppliedSeq=s.seq;
-      desP(s.players);desG(s.grid);
-      turnIdx=s.turnIdx;phase=s.phase;gameOver=!!s.gameOver;
-      draftStep=s.draftStep;draftOrder=s.draftOrder;
-      selWI=s.selWI===-1?null:s.selWI;
-      hlMv=s.hlMv||[];hlBd=s.hlBd||[];
-      atlasDome=!!s.atlasDome;artStart=s.artStart||null;demFirst=s.demFirst||null;hermesFlat=!!s.hermesFlat;
-      renderAll();
-    });
-    if(!players[turnIdx].isHuman)setTimeout(cpuPlace,600);
-  }else{
-    // Local play
-    buildUI();renderAll();
-    if(!players[turnIdx].isHuman)setTimeout(cpuPlace,500);
+  if(onlineMode&&isHost){
+    // Push initial state so guest receives it, then listen for guest moves
+    pushState();
+    stateRef.on('value',function(snap){onRemoteState(snap.val());});
   }
+  // Local or CPU first turn
+  if(!onlineMode&&!players[turnIdx].isHuman)setTimeout(cpuPlace,500);
+  if(onlineMode&&isHost&&!players[turnIdx].isHuman)setTimeout(cpuPlace,500);
 }
 
+/* ===== UI RENDER ===== */
 function buildUI(){
-  var olBadge=onlineMode?'<div class="ol-badge">'+(isHost?'Host \u2014 ':'Guest \u2014 ')+'Playing online</div>':'';
+  var olBadge=onlineMode?'<div class="ol-badge">'+(isHost?'Host':'Guest')+' \u2014 Playing as '+
+    players.filter(function(p,i){if(!p.isHuman)return false;var hi=players.filter(function(q){return q.isHuman;}).indexOf(p);return isHost?(hi%2===0):(hi%2===1);}).map(function(p){return p.name;}).join(' & ')+'</div>':'';
   root().innerHTML='<div id="sb"></div><div id="tt"></div>'+olBadge+'<div id="board"></div>'
     +'<div id="actbar"></div><div id="abilbar"></div>'
     +'<div id="legend">'
@@ -591,11 +520,10 @@ function wSVG(color,lbl){
     +'<circle cx="9" cy="3.5" r="1.2" fill="#C9A840"/><circle cx="13" cy="2" r="1.2" fill="#C9A840"/><circle cx="17" cy="3.5" r="1.2" fill="#C9A840"/>'
     +'<path d="M6 12 C9 10 17 10 20 12 L22 30 L4 30 Z" fill="'+color.fill+'" stroke="#FAF6E8" stroke-width="1.2"/>'
     +'<path d="M6 18 C9 17 17 17 20 18" stroke="#FAF6E8" stroke-width="1" fill="none" opacity="0.55"/>'
-    +(lbl?'<text x="13" y="27" text-anchor="middle" font-size="6" font-weight="600" fill="white" font-family="sans-serif">'+lbl+'</text>':'')
-    +'</svg>';
+    +(lbl?'<text x="13" y="27" text-anchor="middle" font-size="6" font-weight="600" fill="white" font-family="sans-serif">'+lbl+'</text>':'')+'</svg>';
 }
 
-/* ===================== GAME LOGIC ===================== */
+/* ===== GAME LOGIC ===== */
 function nb(r,c){var res=[];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){if(!dr&&!dc)continue;var nr=r+dr,nc=c+dc;if(nr>=0&&nr<SZ&&nc>=0&&nc<SZ)res.push([nr,nc]);}return res;}
 function isAdj(r1,c1,r2,c2){return Math.abs(r1-r2)<=1&&Math.abs(c1-c2)<=1&&!(r1===r2&&c1===c2);}
 function isPerimeter(r,c){return r===0||r===SZ-1||c===0||c===SZ-1;}
@@ -614,12 +542,9 @@ function getBds(p,r,c,excl){
   return res;
 }
 function checkWin(p,fr,fc,tr,tc){
-  var fromLv=grid[fr][fc].level,toLv=grid[tr][tc].level;
-  if(toLv===3&&fromLv<3){
-    if(useAbs){var heraActive=players.some(function(q){return q!==p&&q.ability==='hera';});if(heraActive&&isCorner(tr,tc))return false;}
-    return true;
-  }
-  if(useAbs&&p.ability==='pan'&&fromLv-toLv>=2)return true;
+  var fl=grid[fr][fc].level,tl=grid[tr][tc].level;
+  if(tl===3&&fl<3){if(useAbs){var ha=players.some(function(q){return q!==p&&q.ability==='hera';});if(ha&&isCorner(tr,tc))return false;}return true;}
+  if(useAbs&&p.ability==='pan'&&fl-tl>=2)return true;
   return false;
 }
 function checkChronus(p){return useAbs&&p.ability==='chronus'&&countDomes()>=5;}
@@ -681,8 +606,8 @@ function rActBar(){
     ab.onclick=function(){atlasDome=!atlasDome;rActBar();uSt();};e.appendChild(ab);
   }
   if(phase==='extramove'){var sm=document.createElement('button');sm.className='btn';sm.textContent='Skip Extra Move';sm.onclick=skipExtraMove;e.appendChild(sm);}
-  if(phase==='extrabuild'){var sb2=document.createElement('button');sb2.className='btn';sb2.textContent='Skip Extra Build';sb2.onclick=function(){hlBd=[];advTurn();};e.appendChild(sb2);}
-  if(phase==='removebld'){var sr=document.createElement('button');sr.className='btn';sr.textContent='Skip Remove';sr.onclick=function(){hlBd=[];advTurn();};e.appendChild(sr);}
+  if(phase==='extrabuild'){var sb2=document.createElement('button');sb2.className='btn';sb2.textContent='Skip Extra Build';sb2.onclick=function(){hlBd=[];finishTurn();};e.appendChild(sb2);}
+  if(phase==='removebld'){var sr=document.createElement('button');sr.className='btn';sr.textContent='Skip Remove';sr.onclick=function(){hlBd=[];finishTurn();};e.appendChild(sr);}
 }
 function rAbilBar(){
   if(!useAbs)return;var e=G('abilbar');if(!e)return;
@@ -698,23 +623,24 @@ function uSt(){
   var ab=useAbs?ABS.find(function(a){return a.id===cp.ability;}):null;
   var an=ab&&ab.id!=='none'?' ['+ab.name+']':'';
   var wn=players.length===2?' '+(cp.workers.filter(function(w){return w.pos;}).length+1)+' of 2':'';
-  var myTurn=isMyTurn();
-  var prefix=onlineMode&&!myTurn&&cp.isHuman?'(Waiting) ':'';
+  var waiting=onlineMode&&!isMyTurn()&&cp.isHuman;
+  var pre=waiting?'(Waiting for '+cp.name+') ':'';
   var m={
-    place:prefix+cp.name+' \u2014 Place Worker'+wn,
-    sel:prefix+cp.name+an+' \u2014 Choose a Worker',
-    move:prefix+cp.name+an+' \u2014 Move Up to Win \u2014 Move to Highlighted Space',
-    extramove:prefix+cp.name+an+' \u2014 Move Again, or Skip',
-    build:prefix+cp.name+an+' \u2014 Build'+(cp.ability==='atlas'?' (Toggle Dome/Normal)':'')+(cp.ability==='zeus'?' \u2014 Click worker to build under yourself':''),
-    extrabuild:prefix+cp.name+(cp.ability==='demeter'?' [Demeter]':' [Hephaestus]')+' \u2014 Build Again, or Skip',
-    removebld:prefix+cp.name+' [Ares] \u2014 Remove a Block (amber), or Skip',
+    place:pre+cp.name+' \u2014 Place Worker'+wn,
+    sel:pre+cp.name+an+' \u2014 Choose a Worker',
+    move:pre+cp.name+an+' \u2014 Move to Highlighted Space',
+    extramove:pre+cp.name+an+' \u2014 Move Again, or Skip',
+    build:pre+cp.name+an+' \u2014 Build'+(cp.ability==='atlas'?' (Toggle Dome/Normal)':'')+(cp.ability==='zeus'?' \u2014 Click worker to self-build':''),
+    extrabuild:pre+cp.name+(cp.ability==='demeter'?' [Demeter]':' [Hephaestus]')+' \u2014 Build Again, or Skip',
+    removebld:pre+cp.name+' [Ares] \u2014 Remove a Block, or Skip',
   };
   setSt(m[phase]||'');
 }
 
+/* ===== CLICK HANDLER ===== */
 function click(r,c){
   if(gameOver)return;
-  if(!isMyTurn())return; // gate for online mode
+  if(!isMyTurn())return;
   var cp=players[turnIdx];
   if(phase==='place'){if(grid[r][c].worker)return;var wi=cp.workers.findIndex(function(w){return !w.pos;});if(wi<0)return;placeW(cp,wi,r,c);return;}
   if(phase==='sel'){
@@ -726,7 +652,7 @@ function click(r,c){
     if(!hlMv.some(function(h){return h[0]===r&&h[1]===c;}))return;
     var w=cp.workers[selWI],fr=w.pos[0],fc=w.pos[1];
     var fromLv=grid[fr][fc].level,toLv=grid[r][c].level;
-    if(checkWin(cp,fr,fc,r,c)){doMv(cp,selWI,fr,fc,r,c);endGame(cp);renderAll();if(onlineMode)pushState();return;}
+    if(checkWin(cp,fr,fc,r,c)){doMv(cp,selWI,fr,fc,r,c);endGame(cp);return;}
     if(phase==='move'&&cp.ability==='artemis')artStart=[fr,fc];
     doMv(cp,selWI,fr,fc,r,c);hlMv=[];
     if((phase==='move'||phase==='extramove')&&cp.ability==='hermes'){
@@ -747,50 +673,61 @@ function click(r,c){
     var isSelf=(r===cp.workers[selWI].pos[0]&&c===cp.workers[selWI].pos[1]);
     if(!hlBd.some(function(h){return h[0]===r&&h[1]===c;}))return;
     if(isSelf&&cp.ability==='zeus'){grid[r][c].level++;}else doBd(r,c);
-    if(checkChronus(cp)){endGame(cp);renderAll();if(onlineMode)pushState();return;}
+    if(checkChronus(cp)){endGame(cp);return;}
     demFirst=[r,c];hlBd=[];
     if(cp.ability==='demeter'&&!isSelf){var ww=cp.workers[selWI],exB=getBds(cp,ww.pos[0],ww.pos[1],demFirst).filter(function(n){return !(n[0]===ww.pos[0]&&n[1]===ww.pos[1]);});if(exB.length){hlBd=exB;phase='extrabuild';renderAll();if(onlineMode)pushState();return;}}
     if(cp.ability==='hephaestus'&&!isSelf&&!grid[r][c].dome&&grid[r][c].level<3){hlBd=[[r,c]];phase='extrabuild';renderAll();if(onlineMode)pushState();return;}
     if(cp.ability==='ares'){var w2=cp.workers[selWI],rmT=nb(w2.pos[0],w2.pos[1]).filter(function(n){var t=grid[n[0]][n[1]];return !t.worker&&!t.dome&&t.level>0;});if(rmT.length){hlBd=rmT;phase='removebld';renderAll();if(onlineMode)pushState();return;}}
-    advTurn();return;
+    finishTurn();return;
   }
   if(phase==='extrabuild'){
     if(!hlBd.some(function(h){return h[0]===r&&h[1]===c;}))return;
     if(cp.ability==='hephaestus'){if(!grid[r][c].dome&&grid[r][c].level<3)grid[r][c].level++;}else doBd(r,c);
-    if(checkChronus(cp)){endGame(cp);renderAll();if(onlineMode)pushState();return;}
+    if(checkChronus(cp)){endGame(cp);return;}
     hlBd=[];
     if(cp.ability==='ares'){var w3=cp.workers[selWI],rmT2=nb(w3.pos[0],w3.pos[1]).filter(function(n){var t=grid[n[0]][n[1]];return !t.worker&&!t.dome&&t.level>0;});if(rmT2.length){hlBd=rmT2;phase='removebld';renderAll();if(onlineMode)pushState();return;}}
-    advTurn();return;
+    finishTurn();return;
   }
   if(phase==='removebld'){
     if(!hlBd.some(function(h){return h[0]===r&&h[1]===c;}))return;
-    grid[r][c].level--;hlBd=[];advTurn();return;
+    grid[r][c].level--;hlBd=[];finishTurn();return;
   }
 }
-function startBuild(r,c){var bds=getBds(players[turnIdx],r,c,null);if(!bds.length){advTurn();return;}hlBd=bds;atlasDome=false;phase='build';renderAll();if(onlineMode)pushState();}
+function startBuild(r,c){var bds=getBds(players[turnIdx],r,c,null);if(!bds.length){finishTurn();return;}hlBd=bds;atlasDome=false;phase='build';renderAll();if(onlineMode)pushState();}
 function skipExtraMove(){var w=players[turnIdx].workers[selWI];hlMv=[];startBuild(w.pos[0],w.pos[1]);}
+/* finishTurn: called after all actions for a human turn are complete */
+function finishTurn(){renderAll();if(onlineMode)pushState();advTurn();}
+
 function placeW(cp,wi,r,c){
   grid[r][c].worker={p:cp,wi:wi};cp.workers[wi].pos=[r,c];draftStep++;
   var allDone=players.every(function(p){return p.workers.every(function(w){return w.pos;});});
-  if(allDone||draftStep>=draftOrder.length){phase='sel';turnIdx=0;selWI=null;hlMv=[];hlBd=[];renderAll();if(onlineMode)pushState();if(!onlineMode&&!players[0].isHuman)setTimeout(cpuTurn,600);return;}
-  turnIdx=draftOrder[draftStep];renderAll();
-  if(onlineMode)pushState();
+  if(allDone||draftStep>=draftOrder.length){
+    phase='sel';turnIdx=0;selWI=null;hlMv=[];hlBd=[];
+    renderAll();if(onlineMode)pushState();
+    if(!onlineMode&&!players[0].isHuman)setTimeout(cpuTurn,600);
+    if(onlineMode&&isHost&&!players[0].isHuman)setTimeout(cpuTurn,600);
+    return;
+  }
+  turnIdx=draftOrder[draftStep];renderAll();if(onlineMode)pushState();
   if(!onlineMode&&!players[turnIdx].isHuman)setTimeout(cpuPlace,400);
+  if(onlineMode&&isHost&&!players[turnIdx].isHuman)setTimeout(cpuPlace,400);
 }
 function advTurn(){
   hlMv=[];hlBd=[];selWI=null;atlasDome=false;artStart=null;demFirst=null;hermesFlat=false;
   turnIdx=(turnIdx+1)%players.length;var cp=players[turnIdx];
   var hasMv=cp.workers.some(function(w){return w.pos&&getMvs(cp,w.pos[0],w.pos[1]).length>0;});
   if(!hasMv){
-    if(players.length===2){endGame(players[1-turnIdx]);if(onlineMode)pushState();return;}
+    if(players.length===2){endGame(players[1-turnIdx]);return;}
     var nm=cp.name;cp.workers.forEach(function(w){if(w.pos){grid[w.pos[0]][w.pos[1]].worker=null;w.pos=null;}});
     players.splice(turnIdx,1);
-    if(players.length===1){endGame(players[0]);if(onlineMode)pushState();return;}
-    if(useTeams){for(var t=0;t<2;t++){if(!players.some(function(p){return p.team===t;})){endGame(players.find(function(p){return p.team===1-t;}));if(onlineMode)pushState();return;}}}
+    if(players.length===1){endGame(players[0]);return;}
+    if(useTeams){for(var t=0;t<2;t++){if(!players.some(function(p){return p.team===t;})){endGame(players.find(function(p){return p.team===1-t;}));return;}}}
     turnIdx=turnIdx%players.length;setSt(nm+' has been eliminated!');
     if(onlineMode)pushState();
-    setTimeout(function(){phase='sel';renderAll();if(!onlineMode&&!players[turnIdx].isHuman)setTimeout(cpuTurn,600);if(onlineMode&&isHost&&!players[turnIdx].isHuman)setTimeout(cpuTurn,600);},900);
-    return;
+    setTimeout(function(){phase='sel';renderAll();
+      if(!onlineMode&&!players[turnIdx].isHuman)setTimeout(cpuTurn,600);
+      if(onlineMode&&isHost&&!players[turnIdx].isHuman)setTimeout(cpuTurn,600);
+    },900);return;
   }
   phase='sel';renderAll();
   if(onlineMode)pushState();
@@ -802,37 +739,18 @@ function endGame(winner){
   var msg=useTeams
     ?'Team '+(winner.team===0?'I':'II')+' is victorious! ('+players.filter(function(p){return p.team===winner.team;}).map(function(p){return p.name;}).join(' & ')+')'
     :winner.name+' is victorious!';
-  setSt(msg);renderAll();
+  setSt(msg);renderAll();if(onlineMode)pushState();
 }
 
-/* ===================== AI ===================== */
+/* ===== AI ===== */
 function opponentWinThreats(p){
   var threats=[];
-  players.filter(function(q){return q!==p;}).forEach(function(op){
-    op.workers.forEach(function(w){
-      if(!w.pos)return;
-      getMvs(op,w.pos[0],w.pos[1]).forEach(function(m){
-        if(checkWin(op,w.pos[0],w.pos[1],m[0],m[1])&&!threats.some(function(t){return t[0]===m[0]&&t[1]===m[1];}))
-          threats.push(m);
-      });
-    });
-  });
+  players.filter(function(q){return q!==p;}).forEach(function(op){op.workers.forEach(function(w){if(!w.pos)return;getMvs(op,w.pos[0],w.pos[1]).forEach(function(m){if(checkWin(op,w.pos[0],w.pos[1],m[0],m[1])&&!threats.some(function(t){return t[0]===m[0]&&t[1]===m[1];}))threats.push(m);});});});
   return threats;
 }
 function evalBoard(p){
   var score=0;
-  players.forEach(function(q){
-    var sign=(q===p)?1:-1;
-    q.workers.forEach(function(w){
-      if(!w.pos)return;
-      var lv=grid[w.pos[0]][w.pos[1]].level;
-      score+=sign*lv*20;
-      getMvs(q,w.pos[0],w.pos[1]).forEach(function(m){if(checkWin(q,w.pos[0],w.pos[1],m[0],m[1]))score+=sign*300;});
-      score+=sign*getMvs(q,w.pos[0],w.pos[1]).length*4;
-      var adjLv2=nb(w.pos[0],w.pos[1]).filter(function(n){return grid[n[0]][n[1]].level===2&&!grid[n[0]][n[1]].dome;});
-      score+=sign*adjLv2.length*8;
-    });
-  });
+  players.forEach(function(q){var sign=(q===p)?1:-1;q.workers.forEach(function(w){if(!w.pos)return;var lv=grid[w.pos[0]][w.pos[1]].level;score+=sign*lv*20;getMvs(q,w.pos[0],w.pos[1]).forEach(function(m){if(checkWin(q,w.pos[0],w.pos[1],m[0],m[1]))score+=sign*300;});score+=sign*getMvs(q,w.pos[0],w.pos[1]).length*4;var a2=nb(w.pos[0],w.pos[1]).filter(function(n){return grid[n[0]][n[1]].level===2&&!grid[n[0]][n[1]].dome;});score+=sign*a2.length*8;});});
   return score;
 }
 function scoreMv(p,wi,mr,mc){
@@ -841,44 +759,19 @@ function scoreMv(p,wi,mr,mc){
   var threats=opponentWinThreats(p);
   var sc=tl*18+(tl>fl?20:0)+(tl===2?15:0);
   if(threats.some(function(t){return t[0]===mr&&t[1]===mc;}))sc+=200;
-  var bestBuildSc=-Infinity;
-  getBds(p,mr,mc,null).forEach(function(b){
-    if(b[0]===mr&&b[1]===mc)return;
-    var bl=grid[b[0]][b[1]].level,bs=0;
-    if(threats.some(function(t){return t[0]===b[0]&&t[1]===b[1];}))bs+=250;
-    if(bl===2&&tl>=2)bs+=60;
-    var giftWin=false;
-    players.filter(function(q){return q!==p;}).forEach(function(op){op.workers.forEach(function(ow){
-      if(!ow.pos)return;var ol=grid[ow.pos[0]][ow.pos[1]].level;
-      var d=Math.max(Math.abs(b[0]-ow.pos[0]),Math.abs(b[1]-ow.pos[1]));
-      if(d<=1&&ol>=2&&bl===2)giftWin=true;
-      if(d<=1&&bl===3)bs+=12;
-    });});
-    if(giftWin)bs-=200;bs+=bl*6;
-    if(bs>bestBuildSc)bestBuildSc=bs;
-  });
-  sc+=Math.max(0,bestBuildSc)*0.6;sc+=getMvs(p,mr,mc).length*5;
-  if(diff==='hard'){
-    var savedWorker=grid[mr][mc].worker;
-    grid[fr][fc].worker=null;grid[mr][mc].worker={p:p,wi:wi};p.workers[wi].pos=[mr,mc];
-    sc+=evalBoard(p)*0.3;
-    grid[mr][mc].worker=savedWorker;grid[fr][fc].worker={p:p,wi:wi};p.workers[wi].pos=[fr,fc];
-  }
-  sc+=(diff==='medium'?Math.random()*6:Math.random()*2);
-  return sc;
+  var bsc=-Infinity;
+  getBds(p,mr,mc,null).forEach(function(b){if(b[0]===mr&&b[1]===mc)return;var bl=grid[b[0]][b[1]].level,bs=0;if(threats.some(function(t){return t[0]===b[0]&&t[1]===b[1];}))bs+=250;if(bl===2&&tl>=2)bs+=60;var gw=false;players.filter(function(q){return q!==p;}).forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var ol=grid[ow.pos[0]][ow.pos[1]].level;var d=Math.max(Math.abs(b[0]-ow.pos[0]),Math.abs(b[1]-ow.pos[1]));if(d<=1&&ol>=2&&bl===2)gw=true;if(d<=1&&bl===3)bs+=12;});});if(gw)bs-=200;bs+=bl*6;if(bs>bsc)bsc=bs;});
+  sc+=Math.max(0,bsc)*0.6;sc+=getMvs(p,mr,mc).length*5;
+  if(diff==='hard'){var sw=grid[mr][mc].worker;grid[fr][fc].worker=null;grid[mr][mc].worker={p:p,wi:wi};p.workers[wi].pos=[mr,mc];sc+=evalBoard(p)*0.3;grid[mr][mc].worker=sw;grid[fr][fc].worker={p:p,wi:wi};p.workers[wi].pos=[fr,fc];}
+  sc+=(diff==='medium'?Math.random()*6:Math.random()*2);return sc;
 }
 function scoreBd(p,wr,wc,br,bc){
   if(diff==='easy')return Math.random()*10;
-  var bl=grid[br][bc].level,sc=0;var threats=opponentWinThreats(p);
+  var bl=grid[br][bc].level,sc=0,threats=opponentWinThreats(p);
   if(threats.some(function(t){return t[0]===br&&t[1]===bc;}))sc+=300;
   if(bl===2&&grid[wr][wc].level>=2)sc+=80;
-  var giftWin=false;
-  players.filter(function(q){return q!==p;}).forEach(function(op){op.workers.forEach(function(ow){
-    if(!ow.pos)return;var ol=grid[ow.pos[0]][ow.pos[1]].level;
-    var d=Math.max(Math.abs(br-ow.pos[0]),Math.abs(bc-ow.pos[1]));
-    if(d<=1&&ol>=2&&bl===2)giftWin=true;
-  });});
-  if(giftWin)sc-=200;sc+=bl*8;sc+=Math.random()*3;return sc;
+  var gw=false;players.filter(function(q){return q!==p;}).forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var ol=grid[ow.pos[0]][ow.pos[1]].level;var d=Math.max(Math.abs(br-ow.pos[0]),Math.abs(bc-ow.pos[1]));if(d<=1&&ol>=2&&bl===2)gw=true;});});
+  if(gw)sc-=200;sc+=bl*8;sc+=Math.random()*3;return sc;
 }
 function cpuPlace(){
   if(onlineMode&&!isHost)return;
@@ -886,24 +779,21 @@ function cpuPlace(){
   var empties=[];for(var r=0;r<SZ;r++)for(var c=0;c<SZ;c++)if(!grid[r][c].worker)empties.push([r,c]);
   var pos;
   if(diff==='easy'){pos=empties[Math.floor(Math.random()*empties.length)];}
-  else{pos=empties.slice().sort(function(a,b){
-    var sc=function(x){var s=(x[0]>0&&x[0]<4&&x[1]>0&&x[1]<4)?4:0;s+=(x[0]>1&&x[0]<3&&x[1]>1&&x[1]<3)?2:0;if(diff==='hard'){players.forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var d=Math.max(Math.abs(x[0]-ow.pos[0]),Math.abs(x[1]-ow.pos[1]));s+=Math.max(0,4-d)*1.5;});});}return s+Math.random()*2;};
-    return sc(b)-sc(a);
-  })[0];}
+  else{pos=empties.slice().sort(function(a,b){var sc=function(x){var s=(x[0]>0&&x[0]<4&&x[1]>0&&x[1]<4)?4:0;s+=(x[0]>1&&x[0]<3&&x[1]>1&&x[1]<3)?2:0;if(diff==='hard'){players.forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var d=Math.max(Math.abs(x[0]-ow.pos[0]),Math.abs(x[1]-ow.pos[1]));s+=Math.max(0,4-d)*1.5;});});}return s+Math.random()*2;};return sc(b)-sc(a);})[0];}
   var wi=cp.workers.findIndex(function(w){return !w.pos;});placeW(cp,wi,pos[0],pos[1]);
 }
 function cpuTurn(){
   if(onlineMode&&!isHost)return;
   if(gameOver)return;var cp=players[turnIdx];if(cp.isHuman)return;
-  if(diff==='easy'){cpuTurnEasy(cp);return;}
+  if(diff==='easy'){cpuEasy(cp);return;}
   var best=null,bSc=-Infinity;
   cp.workers.forEach(function(w,wi){if(!w.pos)return;getMvs(cp,w.pos[0],w.pos[1]).forEach(function(m){var s=scoreMv(cp,wi,m[0],m[1]);if(s>bSc){bSc=s;best={wi:wi,mr:m[0],mc:m[1]};}});});
-  if(!best){advTurn();return;}
-  var w=cp.workers[best.wi],fr=w.pos[0],fc=w.pos[1],fromLv=grid[fr][fc].level;
-  if(checkWin(cp,fr,fc,best.mr,best.mc)){doMv(cp,best.wi,fr,fc,best.mr,best.mc);endGame(cp);renderAll();if(onlineMode)pushState();return;}
+  if(!best){cpuAdvTurn();return;}
+  var w=cp.workers[best.wi],fr=w.pos[0],fc=w.pos[1],fl=grid[fr][fc].level;
+  if(checkWin(cp,fr,fc,best.mr,best.mc)){doMv(cp,best.wi,fr,fc,best.mr,best.mc);endGame(cp);return;}
   doMv(cp,best.wi,fr,fc,best.mr,best.mc);
-  if(cp.ability==='artemis'){var exM=getMvs(cp,best.mr,best.mc).filter(function(h){return !(h[0]===fr&&h[1]===fc);});if(exM.length){var em=null,emS=-Infinity;exM.forEach(function(m){var s=scoreMv(cp,best.wi,m[0],m[1]);if(s>emS){emS=s;em=m;}});if(em&&emS>bSc+5){if(checkWin(cp,best.mr,best.mc,em[0],em[1])){doMv(cp,best.wi,best.mr,best.mc,em[0],em[1]);endGame(cp);renderAll();if(onlineMode)pushState();return;}doMv(cp,best.wi,best.mr,best.mc,em[0],em[1]);best.mr=em[0];best.mc=em[1];}}}
-  if(cp.ability==='hermes'&&grid[best.mr][best.mc].level===fromLv){var seen=[[fr,fc]];for(var hi=0;hi<5;hi++){var cur=cp.workers[best.wi].pos;var hm=getMvs(cp,cur[0],cur[1]).filter(function(h){return !seen.some(function(s){return s[0]===h[0]&&s[1]===h[1];})&&grid[h[0]][h[1]].level===grid[cur[0]][cur[1]].level;});if(!hm.length)break;var hb=null,hbs=-Infinity;hm.forEach(function(m){var s=scoreMv(cp,best.wi,m[0],m[1]);if(s>hbs){hbs=s;hb=m;}});if(hb&&hbs>bSc+8){seen.push([cur[0],cur[1]]);doMv(cp,best.wi,cur[0],cur[1],hb[0],hb[1]);best.mr=hb[0];best.mc=hb[1];}else break;}}
+  if(cp.ability==='artemis'){var exM=getMvs(cp,best.mr,best.mc).filter(function(h){return !(h[0]===fr&&h[1]===fc);});if(exM.length){var em=null,emS=-Infinity;exM.forEach(function(m){var s=scoreMv(cp,best.wi,m[0],m[1]);if(s>emS){emS=s;em=m;}});if(em&&emS>bSc+5){if(checkWin(cp,best.mr,best.mc,em[0],em[1])){doMv(cp,best.wi,best.mr,best.mc,em[0],em[1]);endGame(cp);return;}doMv(cp,best.wi,best.mr,best.mc,em[0],em[1]);best.mr=em[0];best.mc=em[1];}}}
+  if(cp.ability==='hermes'&&grid[best.mr][best.mc].level===fl){var seen=[[fr,fc]];for(var hi=0;hi<5;hi++){var cur=cp.workers[best.wi].pos;var hm=getMvs(cp,cur[0],cur[1]).filter(function(h){return !seen.some(function(s){return s[0]===h[0]&&s[1]===h[1];})&&grid[h[0]][h[1]].level===grid[cur[0]][cur[1]].level;});if(!hm.length)break;var hb=null,hbs=-Infinity;hm.forEach(function(m){var s=scoreMv(cp,best.wi,m[0],m[1]);if(s>hbs){hbs=s;hb=m;}});if(hb&&hbs>bSc+8){seen.push([cur[0],cur[1]]);doMv(cp,best.wi,cur[0],cur[1],hb[0],hb[1]);best.mr=hb[0];best.mc=hb[1];}else break;}}
   if(cp.ability==='triton'){for(var ti=0;ti<4;ti++){var tc=cp.workers[best.wi].pos;if(!isPerimeter(tc[0],tc[1]))break;var tm=getMvs(cp,tc[0],tc[1]);if(!tm.length)break;var tb=null,tbs=-Infinity;tm.forEach(function(m){var s=scoreMv(cp,best.wi,m[0],m[1]);if(s>tbs){tbs=s;tb=m;}});if(tb&&tbs>bSc+5){doMv(cp,best.wi,tc[0],tc[1],tb[0],tb[1]);best.mr=tb[0];best.mc=tb[1];}else break;}}
   var bds=getBds(cp,best.mr,best.mc,null).filter(function(b){return !(b[0]===best.mr&&b[1]===best.mc);});
   if(bds.length){
@@ -912,28 +802,32 @@ function cpuTurn(){
     var selfSc=selfOk?(grid[best.mr][best.mc].level+1)*15+(diff==='hard'?20:10):-Infinity;
     if(selfOk&&selfSc>scoreBd(cp,best.mr,best.mc,bd[0],bd[1])){grid[best.mr][best.mc].level++;}
     else{
-      if(cp.ability==='atlas'){var threats2=opponentWinThreats(cp);var shouldDome=grid[bd[0]][bd[1]].level===3||threats2.some(function(t){return t[0]===bd[0]&&t[1]===bd[1];});if(diff==='hard'&&!shouldDome){players.filter(function(q){return q!==cp;}).forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var d=Math.max(Math.abs(bd[0]-ow.pos[0]),Math.abs(bd[1]-ow.pos[1]));if(d<=1&&grid[ow.pos[0]][ow.pos[1]].level>=1&&grid[bd[0]][bd[1]].level>=2)shouldDome=true;});});}if(shouldDome){grid[bd[0]][bd[1]].dome=true;}else{doBd(bd[0],bd[1]);}}else{doBd(bd[0],bd[1]);}
-      if(checkChronus(cp)){endGame(cp);renderAll();if(onlineMode)pushState();return;}
-      if(cp.ability==='demeter'){var exBd=getBds(cp,best.mr,best.mc,bd).filter(function(b){return !(b[0]===best.mr&&b[1]===best.mc);});if(exBd.length){var eb=exBd.reduce(function(a,b){return scoreBd(cp,best.mr,best.mc,b[0],b[1])>scoreBd(cp,best.mr,best.mc,a[0],a[1])?b:a;});doBd(eb[0],eb[1]);if(checkChronus(cp)){endGame(cp);renderAll();if(onlineMode)pushState();return;}}}
-      if(cp.ability==='hephaestus'&&!grid[bd[0]][bd[1]].dome&&grid[bd[0]][bd[1]].level<3){grid[bd[0]][bd[1]].level++;if(checkChronus(cp)){endGame(cp);renderAll();if(onlineMode)pushState();return;}}
-      if(cp.ability==='ares'){var rmTs=nb(best.mr,best.mc).filter(function(n){var t=grid[n[0]][n[1]];return !t.worker&&!t.dome&&t.level>0;});if(rmTs.length){var bestRm=rmTs.reduce(function(a,b){return grid[b[0]][b[1]].level>grid[a[0]][a[1]].level?b:a;});grid[bestRm[0]][bestRm[1]].level--;}}
+      if(cp.ability==='atlas'){var th=opponentWinThreats(cp);var sd=grid[bd[0]][bd[1]].level===3||th.some(function(t){return t[0]===bd[0]&&t[1]===bd[1];});if(diff==='hard'&&!sd){players.filter(function(q){return q!==cp;}).forEach(function(op){op.workers.forEach(function(ow){if(!ow.pos)return;var d=Math.max(Math.abs(bd[0]-ow.pos[0]),Math.abs(bd[1]-ow.pos[1]));if(d<=1&&grid[ow.pos[0]][ow.pos[1]].level>=1&&grid[bd[0]][bd[1]].level>=2)sd=true;});});}if(sd){grid[bd[0]][bd[1]].dome=true;}else{doBd(bd[0],bd[1]);}}else{doBd(bd[0],bd[1]);}
+      if(checkChronus(cp)){endGame(cp);return;}
+      if(cp.ability==='demeter'){var exBd=getBds(cp,best.mr,best.mc,bd).filter(function(b){return !(b[0]===best.mr&&b[1]===best.mc);});if(exBd.length){var eb=exBd.reduce(function(a,b){return scoreBd(cp,best.mr,best.mc,b[0],b[1])>scoreBd(cp,best.mr,best.mc,a[0],a[1])?b:a;});doBd(eb[0],eb[1]);if(checkChronus(cp)){endGame(cp);return;}}}
+      if(cp.ability==='hephaestus'&&!grid[bd[0]][bd[1]].dome&&grid[bd[0]][bd[1]].level<3){grid[bd[0]][bd[1]].level++;if(checkChronus(cp)){endGame(cp);return;}}
+      if(cp.ability==='ares'){var rmTs=nb(best.mr,best.mc).filter(function(n){var t=grid[n[0]][n[1]];return !t.worker&&!t.dome&&t.level>0;});if(rmTs.length){var br2=rmTs.reduce(function(a,b){return grid[b[0]][b[1]].level>grid[a[0]][a[1]].level?b:a;});grid[br2[0]][br2[1]].level--;}}
     }
   }
-  renderAll();if(onlineMode)pushState();setTimeout(advTurn,400);
+  cpuAdvTurn();
 }
-function cpuTurnEasy(cp){
-  if(onlineMode&&!isHost)return;
-  var moves=[];
-  cp.workers.forEach(function(w,wi){if(!w.pos)return;getMvs(cp,w.pos[0],w.pos[1]).forEach(function(m){moves.push({wi:wi,mr:m[0],mc:m[1]});});});
-  if(!moves.length){advTurn();return;}
+function cpuEasy(cp){
+  var moves=[];cp.workers.forEach(function(w,wi){if(!w.pos)return;getMvs(cp,w.pos[0],w.pos[1]).forEach(function(m){moves.push({wi:wi,mr:m[0],mc:m[1]});});});
+  if(!moves.length){cpuAdvTurn();return;}
   var win=moves.find(function(mv){var w=cp.workers[mv.wi];return checkWin(cp,w.pos[0],w.pos[1],mv.mr,mv.mc);});
   var mv=win||moves[Math.floor(Math.random()*moves.length)];
   var w=cp.workers[mv.wi],fr=w.pos[0],fc=w.pos[1];
-  if(checkWin(cp,fr,fc,mv.mr,mv.mc)){doMv(cp,mv.wi,fr,fc,mv.mr,mv.mc);endGame(cp);renderAll();if(onlineMode)pushState();return;}
+  if(checkWin(cp,fr,fc,mv.mr,mv.mc)){doMv(cp,mv.wi,fr,fc,mv.mr,mv.mc);endGame(cp);return;}
   doMv(cp,mv.wi,fr,fc,mv.mr,mv.mc);
   var bds=getBds(cp,mv.mr,mv.mc,null).filter(function(b){return !(b[0]===mv.mr&&b[1]===mv.mc);});
   if(bds.length){var bd=bds[Math.floor(Math.random()*bds.length)];doBd(bd[0],bd[1]);}
-  renderAll();if(onlineMode)pushState();setTimeout(advTurn,400);
+  cpuAdvTurn();
+}
+/* CPU version of advTurn: renders + pushes then calls advTurn after delay */
+function cpuAdvTurn(){
+  renderAll();
+  if(onlineMode)pushState();
+  setTimeout(advTurn,400);
 }
 
 showSetup();
