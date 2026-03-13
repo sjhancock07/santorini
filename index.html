@@ -176,7 +176,7 @@ var STACK_H=[0,13,35,48];
 */
 var onlineMode=false,isHost=false,gameCode='';
 var lobbyRef=null,stateRef=null;
-var mySeq=0; // sequence number of last state I pushed
+var lastPushId=null;
 var gameUIBuilt=false;
 
 function G(id){return document.getElementById(id);}
@@ -207,11 +207,11 @@ function desG(g){
 }
 
 /* Push full game state to Firebase. Only the active player calls this. */
-function pushState(){
+function pushState(){var pid=Math.random().toString(36).slice(2)+Date.now().toString(36);lastPushId=pid;
   if(!onlineMode||!db)return;
-  mySeq++;
+
   var s={
-    seq:mySeq,ts:Date.now(),
+    pushId:pid,ts:Date.now(),
     useAbs:useAbs?1:0,useTeams:useTeams?1:0,
     players:serP(),grid:serG(),
     turnIdx:turnIdx,phase:phase,gameOver:gameOver?1:0,
@@ -229,7 +229,7 @@ function pushState(){
 function onRemoteState(s){
   if(!s)return;
   // Skip if this is our own push echoed back
-  if(s.seq===mySeq)return;
+  if(s.pushId&&s.pushId===lastPushId)return;
 
   useAbs=!!s.useAbs;useTeams=!!s.useTeams;
   desP(s.players);desG(s.grid);
@@ -283,7 +283,7 @@ function showRules(){
 
 /* ===== MAIN SETUP ===== */
 function showSetup(){
-  onlineMode=false;isHost=false;gameCode='';gameUIBuilt=false;mySeq=0;
+  onlineMode=false;isHost=false;gameCode='';gameUIBuilt=false;lastPushId=null;
   if(stateRef){stateRef.off();stateRef=null;}
   if(lobbyRef){lobbyRef.off();lobbyRef=null;}
   var total=hC+cC,ok=total>=2&&total<=4;
@@ -322,7 +322,7 @@ function togAbs(){useAbs=!useAbs;showSetup();}
 /* ===== ONLINE: HOST LOBBY (code first, config after guest joins) ===== */
 function startHostLobby(){
   if(!initFB()){alert('Could not connect to Firebase. Check internet connection.');return;}
-  onlineMode=true;isHost=true;gameCode=genCode();gameUIBuilt=false;mySeq=0;
+  onlineMode=true;isHost=true;gameCode=genCode();gameUIBuilt=false;lastPushId=null;
   // Write lobby record so guest can find the room
   lobbyRef=db.ref('games/'+gameCode+'/lobby');
   lobbyRef.set({status:'waiting',created:Date.now()});
@@ -380,7 +380,7 @@ function joinGame(){
   // Verify lobby exists
   db.ref('games/'+code+'/lobby').once('value',function(snap){
     if(!snap.val()){if(errEl)errEl.textContent='Game not found. Check the code.';return;}
-    onlineMode=true;isHost=false;gameCode=code;gameUIBuilt=false;mySeq=0;
+    onlineMode=true;isHost=false;gameCode=code;gameUIBuilt=false;lastPushId=null;
     // Signal presence
     db.ref('games/'+code+'/guest').set({joined:Date.now()});
     stateRef=db.ref('games/'+code+'/state');
