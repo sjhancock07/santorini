@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -208,7 +209,7 @@ function desP(sp){
       var enc=pd['wr'+wi];
       workers.push({pos:enc>=0?[Math.floor(enc/10),enc%10]:null});
     }
-    players.push({name:pd.nm,color:clr,team:pd.tm,ability:pd.ab,isHuman:!!pd.hu,workers:workers});
+    players.push({name:pd.nm||'Player',color:clr,team:pd.tm||0,ability:pd.ab||'none',isHuman:!!pd.hu,workers:workers});
   }
 }
 function serG(){
@@ -228,7 +229,8 @@ function desG(g){
     grid[r]=[];
     for(var c=0;c<SZ;c++){
       var cell=g['c'+r+'x'+c];
-      grid[r][c]={level:cell.lv,dome:!!cell.dm,worker:cell.wp>=0?{p:players[cell.wp],wi:cell.ww}:null};
+      if(!cell){grid[r][c]={level:0,dome:false,worker:null};continue;}
+      grid[r][c]={level:cell.lv||0,dome:!!cell.dm,worker:cell.wp>=0?{p:players[cell.wp],wi:cell.ww}:null};
     }
   }
 }
@@ -266,6 +268,7 @@ function pushState(){var pid=Math.random().toString(36).slice(2)+Date.now().toSt
   if(!onlineMode||!db)return;
 
   var s={
+    v:3,
     pushId:pid,ts:Date.now(),
     useAbs:useAbs?1:0,useTeams:useTeams?1:0,
     players:serP(),grid:serG(),
@@ -286,7 +289,9 @@ function onRemoteState(s){
   // Skip if this is our own push echoed back
   if(s.pushId&&s.pushId===lastPushId)return;
 
-  if(!s.players||!s.grid)return;
+  if(!s||!s.players||!s.grid||s.v!==3)return;
+  // Validate grid has expected keys
+  if(s.grid['c0x0']===undefined||s.grid['c0x0']===null)return;
   useAbs=!!s.useAbs;useTeams=!!s.useTeams;
   desP(s.players);desG(s.grid);
   turnIdx=s.turnIdx;phase=s.phase;gameOver=!!s.gameOver;
@@ -391,6 +396,8 @@ function startHostLobby(){
   if(!initFB()){alert('Could not connect to Firebase. Check internet connection.');return;}
   onlineMode=true;isHost=true;gameCode=genCode();gameUIBuilt=false;lastPushId=null;
   // Write lobby record so guest can find the room
+  // Clear any previous game at this code first
+  db.ref('games/'+gameCode).remove();
   lobbyRef=db.ref('games/'+gameCode+'/lobby');
   lobbyRef.set({status:'waiting',created:Date.now()});
   stateRef=db.ref('games/'+gameCode+'/state');
